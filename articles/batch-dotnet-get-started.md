@@ -75,8 +75,8 @@ Files are uploaded into the Blob service of Azure Storage. Azure Blob storage is
 
 		<?xml version="1.0" encoding="utf-8" ?>
 		<configuration>
-		   <appSettings>
-		     <add key="StorageConnectionString" value="DefaultEndpointsProtocol=https;AccountName=[name-of-storage-account];AccountKey=[key-of-storage-account]"/>
+			<appSettings>
+				<add key="StorageConnectionString" value="DefaultEndpointsProtocol=https;AccountName=[name-of-storage-account];AccountKey=[key-of-storage-account]"/>
 		     </appSettings>
 		</configuration>  
 
@@ -122,13 +122,17 @@ The executable program that processes the data must be uploaded to Azure Storage
 1.	In Solution Explorer, create a new console application project named **ProcessTaskData** in the **AzureBatch** solution.
 2.	Add the following namespace declaration to the top of Program.cs:
 		using Microsoft.WindowsAzure.StorageClient;
-	Make sure that you reference the Microsoft.WindowsAzure.StorageClient.dll assembly.
+	Make sure that you reference the Microsoft.WindowsAzure.Storage.dll assembly.
 3.	Add the following code to Main that will be used to process data:
 
 		string blobName = args[0];
 		int numTopN = int.Parse(args[1]);
 		
-		CloudBlob blob = new CloudBlob(blobName);
+		CloudStorageAccount storageAccount = CloudStorageAccount.Parse(
+		   ConfigurationManager.AppSettings["StorageConnectionString"])
+		CloudBlobClient blobClient = storageAccount.CreateCloudBlobClient();
+		CloudBlobContainer container = blobClient.GetContainerReference("[name-of-container]");
+		CloudBlockBlob blob = container.GetBlockBlobReference(blobName);
 		string content = blob.DownloadText();
 		string[] words = content.Split(' ');
 		var topNWords =
@@ -159,10 +163,10 @@ This tutorial uses three simple text files to demonstrate using tasks to process
 ####Upload the files
 1.	Add the following namespace declarations to the top of Program.cs in the **UploadData** project:
 
-		using Microsoft.WindowsAzure.StorageClient;
-		using Microsoft.WindowsAzure;
+		using Microsoft.WindowsAzure.Storage;
+		using Microsoft.WindowsAzure.Storage.Blob;
 		using System.Configuration;
-	Make sure that you reference the Microsoft.WindowsAzure.StorageClient.dll assembly and the System.Configuration.dll assembly.
+	Make sure that you reference the Microsoft.WindowsAzure.Storage.dll assembly and the System.Configuration.dll assembly.
 2.	Copy the App.config file that you previously created from the **CreateContainer** project to the **UploadData** project.
 3.	Add the following code to Main to upload the text files, program file, and the dependent assembly:
 
@@ -170,17 +174,16 @@ This tutorial uses three simple text files to demonstrate using tasks to process
 		   ConfigurationManager.AppSettings["StorageConnectionString"]);
 		CloudBlobClient blobClient = storageAccount.CreateCloudBlobClient();
 		CloudBlobContainer container = blobClient.GetContainerReference("[name-of-container]");
-		CloudBlob taskData1 = container.GetBlobReference("taskdata1");
-		CloudBlob taskData2 = container.GetBlobReference("taskdata2");
-		CloudBlob taskData3 = container.GetBlobReference("taskdata3");
-		CloudBlob dataprocessor = container.GetBlobReference("ProcessTaskData.exe");
-		CloudBlob storageassembly = 
-		   container.GetBlobReference("Microsoft.WindowsAzure.StorageClient.dll");
-		taskData1.UploadFile("taskdata1.txt");
-		taskData2.UploadFile("taskdata2.txt");
-		taskData3.UploadFile("taskdata3.txt");
-		dataprocessor.UploadFile("..\\..\\..\\ProcessTaskData\\bin\\debug\\ProcessTaskData.exe");
-		storageassembly.UploadFile("Microsoft.WindowsAzure.StorageClient.dll");
+		CloudBlockBlob taskData1 = container.GetBlockBlobReference("taskdata1");
+		CloudBlockBlob taskData2 = container.GetBlockBlobReference("taskdata2");
+		CloudBlockBlob taskData3 = container.GetBlockBlobReference("taskdata3");
+		CloudBlockBlob dataProcessor = container.GetBlockBlobReference("ProcessTaskData.exe");
+		CloudBlockBlob storageAssembly = container.GetBlockBlobReference("Microsoft.WindowsAzure.Storage.dll");
+		taskData1.UploadFromFile("taskdata1.txt", FileMode.Open);
+		taskData2.UploadFromFile("taskdata2.txt", FileMode.Open);
+		taskData3.UploadFromFile("taskdata3.txt", FileMode.Open);
+		dataProcessor.UploadFromFile(@"..\..\..\ProcessTaskData\bin\debug\ProcessTaskData.exe", FileMode.Open);
+		storageAssembly.UploadFromFile("Microsoft.WindowsAzure.Storage.dll", FileMode.Open);
 	Replace **[name-of-container]** with the name that you want to use for the container in your storage account.
 4.	Save and run the program.
 ###How to: Add a pool to an account
@@ -199,7 +202,7 @@ A pool of task virtual machines is the first set of resources that you must crea
 		private const int NumOfMachines = 3;
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]";
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
 	-	**[name-of-pool]** - The name that you want to use for the pool.
 	-	**[name-of-batch-account]** - The name of the Batch account.
@@ -286,7 +289,7 @@ You must create a workitem to define how the tasks will run in the pool.
 		private const string PoolName = "[name-of-pool]";
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]"; 
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
 	-	**[name-of-workitem]** - The name that you want to use for the workitem.
 	-	**[name-of-pool]** - The name of the pool that you previously created. A workitem must be associated with a pool.
@@ -304,9 +307,10 @@ You must create a workitem to define how the tasks will run in the pool.
 
 		using (IWorkItemManager wm = client.OpenWorkItemManager())
 		{
-		   ICloudJob job = wm.CreateJob(PoolName);
-		   job.WorkItemName = WorkItemName;
-		   job.Commit();
+		   IToolbox toolbox = client.OpenToolbox();
+		   ITaskSubmissionHelper taskSubmissionHelper = toolbox.CreateTaskSubmissionHelper(wm, PoolName);
+		   taskSubmissionHelper.WorkItemName = WorkItemName;
+		   taskSubmissionHelper.Commit();
 		}
 		Console.WriteLine("Workitem successfully added.");
 		Console.ReadLine();
@@ -326,7 +330,7 @@ If you don’t know the name of an existing workitem, you can get a list of them
 
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]";
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
 	-	**[name-of-batch-account]** - The name of the Batch account.
 	-	**[key-of-batch-account]** - The key that was provided to you for the Batch account.
@@ -339,7 +343,7 @@ If you don’t know the name of an existing workitem, you can get a list of them
 		client.CustomBehaviors.Add(new SetRetryPolicy(new Microsoft.Azure.Batch.Protocol.NoRetry()));
 6.	Add the following code to Main that writes the names and states of all workitems in the account:
 
-		using (IPoolManager pm = client.OpenPoolManager())
+		using (IWorkItemManager wm = client.OpenWorkItemManager())
 		{
 		   Console.WriteLine("Listing Workitems\n=================");
 		   IEnumerable<ICloudWorkItem> workitems = wm.ListWorkItems();
@@ -370,9 +374,9 @@ After you create the workitem and the job is created, you can add tasks to the j
 		private const string JobName = "job-0000000001";
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]"; 
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
-	-•	**[path-of-blob-in-storage]** – The path to the blob in storage. For example: http://mystorage1.blob.core.windows.net/batchfiles/.
+	-•	**[path-of-blob-in-storage]** – The path to the blob in storage. For example: https://mystorage1.blob.core.windows.net/batchfiles/.
 	-	**[name-of-workitem]** - The name of the workitem that you previously created.
 	-	**[name-of-batch-account]** - The name of the Batch account.
 	-	**[key-of-batch-account]** - The key that was provided to you for the Batch account.
@@ -391,7 +395,7 @@ After you create the workitem and the job is created, you can add tasks to the j
 		   for (int i = 1; i < FileCount; ++i)
 		   {
 		      taskName = "taskdata" + i;
-		      ICloudJob job = wm.GetJob(WorkitemName, JobName);
+		      ICloudJob job = wm.GetJob(WorkItemName, JobName);
 		      IResourceFile programFile = new ResourceFile(
 		         BlobPath + "ProcessTaskData.exe", 
 		         "ProcessTaskData.exe");
@@ -399,28 +403,30 @@ After you create the workitem and the job is created, you can add tasks to the j
 		         BlobPath + taskName, 
 		         taskName);
 		      IResourceFile supportFile2 = new ResourceFile(
-		         BlobPath + "Microsoft.WindowsAzure.StorageClient.dll", 
-		         "Microsoft.WindowsAzure.StorageClient.dll");
+		         BlobPath + "Microsoft.WindowsAzure.Storage.dll", 
+		         "Microsoft.WindowsAzure.Storage.dll");
 		      
 		      string commandLine = 
 		         String.Format("ProcessTaskData.exe {0} {1}", 
-		         BlobPath + taskName, NumberOfWords);
+		         taskName, NumberOfWords);
 		      ICloudTask taskToAdd = new CloudTask(taskName, commandLine);
-		      taskToAdd.AddResourceFile(programFile);
-		      taskToAdd.AddResourceFile(supportFile1);
-		      taskToAdd.AddResourceFile(supportFile2);
+		      taskToAdd.ResourceFiles = new List<IResourceFile>();
+		      taskToAdd.ResourceFiles.Add(programFile);
+		      taskToAdd.ResourceFiles.Add(supportFile1);
+		      taskToAdd.ResourceFiles.Add(supportFile2);
 		      job.AddTask(taskToAdd);
 		      job.Commit();
 		   }
 		   
-		   ICloudJob listjob = wm.GetJob(WorkitemName, JobName);
+		   ICloudJob listjob = wm.GetJob(WorkItemName, JobName);
 		   client.OpenToolbox().CreateTaskStateMonitor().WaitAll(listjob.ListTasks(), 
 		      TaskState.Completed, new TimeSpan(0, 30, 0));
 		   Console.WriteLine("The tasks completed successfully. Terminating the workitem...");
-		   wm.GetWorkItem(WorkitemName).Terminate();
+		   wm.GetWorkItem(WorkItemName).Terminate();
 		   foreach (ICloudTask task in listjob.ListTasks())
 		   {
-		      Console.WriteLine("Task " + task.Name + " says:\n" + task.StdOut);
+		      Console.WriteLine("Task " + task.Name + " says:\n" + task.GetTaskFile(Constants.StandardOutFileName).ReadAsString());
+		      Console.WriteLine(task.GetTaskFile(Constants.StandardErrorFileName).ReadAsString());
 		   }
 		   Console.ReadLine();
 		}
@@ -443,7 +449,7 @@ After your data has been processed you can release resources by deleting the poo
 		private const string PoolName = "[name-of-pool]";
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]"; 
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
 	-	**[name-of-pool]** - The name of the pool that you previously created.
 	-	**[name-of-batch-account]** - The name of the Batch account.
@@ -479,7 +485,7 @@ After your data has been processed you can release resources by deleting the poo
 		private const string WorkItemName = "[name-of-workitem]";
 		private const string AccountName = "[name-of-batch-account]";
 		private const string AccountKey = "[key-of-batch-account]"; 
-		private const string Uri = "http://batch.core.windows.net";
+		private const string Uri = "https://batch.core.windows.net";
 	Replace the following values:
 	-	**[name-of-workitem]** - The name of the workitem that you previously added.
 	-	**[name-of-batch-account]** - The name of the Batch account.
@@ -495,7 +501,7 @@ After your data has been processed you can release resources by deleting the poo
 
 		using (IWorkItemManager wm = client.OpenWorkItemManager())
 		{
-		   wm.DeleteWorkItem(WorkitemName);
+		   wm.DeleteWorkItem(WorkItemName);
 		}
 		Console.WriteLine("Workitem successfully deleted.");
 		Console.ReadLine();
